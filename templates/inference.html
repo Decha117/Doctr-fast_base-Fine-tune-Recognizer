@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h2>Inference</h2>
+  <label>Select image</label>
+  <select id="image-select">
+    {% for file in uploads %}
+      <option value="{{ file }}">{{ file }}</option>
+    {% else %}
+      <option>No uploads</option>
+    {% endfor %}
+  </select>
+  <button id="load-image">Load</button>
+</section>
+
+<section class="card">
+  <h3>Draw bbox</h3>
+  <div class="canvas-wrap">
+    <canvas id="infer-canvas"></canvas>
+  </div>
+  <button id="run-infer">Run Inference</button>
+</section>
+
+<section class="card">
+  <h3>Results</h3>
+  <div class="grid">
+    <div>
+      <h4>Base model</h4>
+      <pre id="base-result" class="mono"></pre>
+    </div>
+    <div>
+      <h4>Fine-tuned model</h4>
+      <pre id="tuned-result" class="mono"></pre>
+    </div>
+  </div>
+</section>
+
+<script>
+const canvas = document.getElementById('infer-canvas');
+const ctx = canvas.getContext('2d');
+const imageSelect = document.getElementById('image-select');
+let image = new Image();
+let currentBox = null;
+let start = null;
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  if (currentBox) {
+    const [x1, y1, x2, y2] = currentBox;
+    ctx.strokeStyle = '#10b981';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+  }
+}
+
+function loadImage() {
+  image.onload = () => {
+    canvas.width = image.width;
+    canvas.height = image.height;
+    draw();
+  };
+  image.src = `/uploads/${imageSelect.value}`;
+}
+
+document.getElementById('load-image').addEventListener('click', loadImage);
+loadImage();
+
+canvas.addEventListener('mousedown', (event) => {
+  const rect = canvas.getBoundingClientRect();
+  start = [event.clientX - rect.left, event.clientY - rect.top];
+});
+canvas.addEventListener('mousemove', (event) => {
+  if (!start) return;
+  const rect = canvas.getBoundingClientRect();
+  const current = [event.clientX - rect.left, event.clientY - rect.top];
+  currentBox = [start[0], start[1], current[0], current[1]];
+  draw();
+});
+canvas.addEventListener('mouseup', () => {
+  if (!currentBox) return;
+  const [x1, y1, x2, y2] = currentBox;
+  currentBox = [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)];
+  draw();
+  start = null;
+});
+
+
+document.getElementById('run-infer').addEventListener('click', async () => {
+  const payload = {
+    filename: imageSelect.value,
+    bbox: currentBox
+  };
+  const response = await fetch('/api/inference', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json();
+  document.getElementById('base-result').textContent = data.base || data.error || '';
+  document.getElementById('tuned-result').textContent = data.tuned || data.error || '';
+});
+</script>
+{% endblock %}

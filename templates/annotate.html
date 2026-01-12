@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h2>Annotate: {{ filename }}</h2>
+  <div class="canvas-wrap">
+    <canvas id="canvas"></canvas>
+  </div>
+  <div class="controls">
+    <label>Label <input id="label" type="text" /></label>
+    <button id="save-box">Save Box</button>
+  </div>
+</section>
+
+<section class="card">
+  <h3>Annotations</h3>
+  <ul id="annotation-list" class="file-list"></ul>
+</section>
+
+<script>
+const imageUrl = "{{ image_url }}";
+const filename = "{{ filename }}";
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const labelInput = document.getElementById('label');
+let image = new Image();
+let annotations = [];
+let currentBox = null;
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = '#f97316';
+  ctx.lineWidth = 2;
+  annotations.forEach((ann) => {
+    const [x1, y1, x2, y2] = ann.bbox;
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+  });
+  if (currentBox) {
+    const [x1, y1, x2, y2] = currentBox;
+    ctx.strokeStyle = '#2563eb';
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+  }
+}
+
+function renderList() {
+  const list = document.getElementById('annotation-list');
+  list.innerHTML = '';
+  annotations.forEach((ann, idx) => {
+    const li = document.createElement('li');
+    li.innerHTML = `<span>${ann.text} [${ann.bbox.join(', ')}]</span>`;
+    const editBtn = document.createElement('button');
+    editBtn.textContent = 'Edit';
+    editBtn.onclick = () => {
+      labelInput.value = ann.text;
+      currentBox = ann.bbox;
+      draw();
+    };
+    const delBtn = document.createElement('button');
+    delBtn.textContent = 'Delete';
+    delBtn.onclick = async () => {
+      await fetch(`/api/annotations/${filename}/${idx}`, { method: 'DELETE' });
+      await loadAnnotations();
+    };
+    li.append(editBtn, delBtn);
+    list.appendChild(li);
+  });
+}
+
+async function loadAnnotations() {
+  const response = await fetch(`/api/annotations/${filename}`);
+  annotations = await response.json();
+  renderList();
+  draw();
+}
+
+let start = null;
+canvas.addEventListener('mousedown', (event) => {
+  const rect = canvas.getBoundingClientRect();
+  start = [event.clientX - rect.left, event.clientY - rect.top];
+});
+canvas.addEventListener('mousemove', (event) => {
+  if (!start) return;
+  const rect = canvas.getBoundingClientRect();
+  const current = [event.clientX - rect.left, event.clientY - rect.top];
+  currentBox = [start[0], start[1], current[0], current[1]];
+  draw();
+});
+canvas.addEventListener('mouseup', () => {
+  if (!currentBox) return;
+  const [x1, y1, x2, y2] = currentBox;
+  currentBox = [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)];
+  draw();
+  start = null;
+});
+
+function resizeCanvas() {
+  canvas.width = image.width;
+  canvas.height = image.height;
+  draw();
+}
+
+image.onload = () => {
+  resizeCanvas();
+  loadAnnotations();
+};
+image.src = imageUrl;
+
+
+document.getElementById('save-box').addEventListener('click', async () => {
+  if (!currentBox) return;
+  const payload = { bbox: currentBox, text: labelInput.value };
+  await fetch(`/api/annotations/${filename}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  currentBox = null;
+  labelInput.value = '';
+  await loadAnnotations();
+});
+</script>
+{% endblock %}

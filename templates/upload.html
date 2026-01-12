@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h2>1. Upload Images</h2>
+  <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data">
+    <input type="file" name="files" multiple accept="image/*" required />
+    <button type="submit">Upload</button>
+  </form>
+  <ul class="file-list">
+    {% for file in uploads %}
+      <li>
+        <span>{{ file }}</span>
+        <a class="link" href="{{ url_for('annotate', filename=file) }}">Annotate</a>
+      </li>
+    {% else %}
+      <li>No uploads yet.</li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section class="card">
+  <h2>2. Build Dataset</h2>
+  <label>Charset</label>
+  <input id="charset" type="text" value="0123456789/:ABCDEFGHIJKLMNOPQRSTUVWXYZ " />
+  <button id="build-dataset">Build Dataset</button>
+  <div id="dataset-result" class="mono"></div>
+  <div id="dataset-rejected" class="warning"></div>
+</section>
+
+<section class="card">
+  <h2>3. Training</h2>
+  <div class="grid">
+    <label>Epochs <input id="epochs" type="number" value="20" /></label>
+    <label>Batch size <input id="batch_size" type="number" value="64" /></label>
+    <label>Learning rate <input id="lr" type="number" step="0.0001" value="0.0001" /></label>
+    <label>Optimizer <select id="optimizer"><option>AdamW</option><option>Adam</option></select></label>
+    <label>Image height <input id="img_height" type="number" value="32" /></label>
+    <label>Image width <input id="img_width" type="number" value="128" /></label>
+  </div>
+  <button id="start-training">Start Training</button>
+  <div class="status-grid">
+    <div>
+      <h3>Progress</h3>
+      <div id="progress"></div>
+      <div id="metrics" class="mono"></div>
+    </div>
+    <div>
+      <h3>System Monitor</h3>
+      <div id="system-status" class="mono"></div>
+    </div>
+  </div>
+  <h3>Logs</h3>
+  <pre id="logs" class="log"></pre>
+</section>
+
+<section class="card">
+  <h2>4. Export</h2>
+  <a class="button" href="{{ url_for('download_model') }}">Download Model Bundle</a>
+</section>
+
+<script>
+const datasetResult = document.getElementById('dataset-result');
+const datasetRejected = document.getElementById('dataset-rejected');
+
+document.getElementById('build-dataset').addEventListener('click', async () => {
+  datasetResult.textContent = 'Building dataset...';
+  datasetRejected.textContent = '';
+  const formData = new FormData();
+  formData.append('charset', document.getElementById('charset').value);
+  const response = await fetch('/build_dataset', { method: 'POST', body: formData });
+  const data = await response.json();
+  datasetResult.textContent = JSON.stringify(data, null, 2);
+  if (data.rejected && data.rejected.length) {
+    datasetRejected.textContent = `Rejected labels: ${data.rejected.length}. Please edit annotations.`;
+  }
+});
+
+let eventSource;
+const logsEl = document.getElementById('logs');
+const metricsEl = document.getElementById('metrics');
+const progressEl = document.getElementById('progress');
+
+function appendLog(message) {
+  logsEl.textContent += `${message}\n`;
+  logsEl.scrollTop = logsEl.scrollHeight;
+}
+
+function connectEvents() {
+  if (eventSource) {
+    eventSource.close();
+  }
+  eventSource = new EventSource('/events');
+  eventSource.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (data.type === 'progress') {
+      progressEl.textContent = `${data.message} (${data.percent}%)`;
+      appendLog(data.message);
+    }
+    if (data.type === 'metrics') {
+      metricsEl.textContent = JSON.stringify(data, null, 2);
+      appendLog(`Epoch ${data.epoch}: train_loss=${data.train_loss} val_loss=${data.val_loss} CER=${data.cer}`);
+    }
+    if (data.type === 'finished') {
+      appendLog('Training finished.');
+    }
+  };
+}
+
+connectEvents();
+
+document.getElementById('start-training').addEventListener('click', async () => {
+  logsEl.textContent = '';
+  const payload = {
+    epochs: parseInt(document.getElementById('epochs').value, 10),
+    batch_size: parseInt(document.getElementById('batch_size').value, 10),
+    lr: parseFloat(document.getElementById('lr').value),
+    optimizer: document.getElementById('optimizer').value,
+    img_height: parseInt(document.getElementById('img_height').value, 10),
+    img_width: parseInt(document.getElementById('img_width').value, 10)
+  };
+  await fetch('/train', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+});
+
+async function refreshSystem() {
+  const response = await fetch('/status');
+  const data = await response.json();
+  document.getElementById('system-status').textContent = JSON.stringify(data, null, 2);
+}
+
+setInterval(refreshSystem, 2000);
+refreshSystem();
+</script>
+{% endblock %}
